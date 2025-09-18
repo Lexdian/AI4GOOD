@@ -1,1 +1,3 @@
 # AI4GOOD
+
+# GMINI > GPT
