@@ -1,3 +1,3 @@
 # AI4GOOD
 
-# GMINI > GPT
+# GEMINI > GPT
