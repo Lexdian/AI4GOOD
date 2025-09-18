@@ -5,7 +5,7 @@ Neural Network + Tkinter GUI from scratch (no ML libs)
 - Classification (multi-class) using softmax + cross-entropy
 - Hidden layers with ReLU
 - CSV loader, label encoding, min-max normalization
-- Train/test split, simple metrics
+- Train/validation/test split, simple metrics
 - Single-sample prediction UI
 
 Usage:
@@ -138,18 +138,22 @@ def minmax_scale_transform(X: List[List[float]], mins: List[float], maxs: List[f
         Xn.append([(row[j] - mins[j]) / (maxs[j] - mins[j]) for j in range(len(row))])
     return Xn
 
-def train_test_split(X, y, test_size=0.2, seed=42):
-    random.Random(seed).shuffle(X)
-    # Keep pairing with y
+# --- MODIFICAÇÃO: Nova função para divisão em treino/validação/teste ---
+def train_val_test_split(X, y, val_size=0.1, test_size=0.2, seed=42):
     pairs = list(zip(X, y))
     random.Random(seed).shuffle(pairs)
     n = len(pairs)
-    nt = int(n * (1 - test_size))
-    train = pairs[:nt]
-    test = pairs[nt:]
+    n_test = int(n * test_size)
+    n_val = int(n * val_size)
+
+    test = pairs[:n_test]
+    val = pairs[n_test : n_test + n_val]
+    train = pairs[n_test + n_val :]
+
     Xtr, ytr = zip(*train) if train else ([], [])
+    Xval, yval = zip(*val) if val else ([], [])
     Xte, yte = zip(*test) if test else ([], [])
-    return list(Xtr), list(ytr), list(Xte), list(yte)
+    return list(Xtr), list(ytr), list(Xval), list(yval), list(Xte), list(yte)
 
 def load_dataset(csv_path: str, target_col: int, normalize: bool = True) -> Dataset:
     rows = read_csv(csv_path)
@@ -252,7 +256,7 @@ class MLP:
             W_next_T = transpose(self.W[li+1])  # shape: (n_curr, n_next)
             delta_next = grads_b[li+1]          # length = n_next
 
-            # delta_k = sum_j W[k][j] * delta_next_j   (k = unidade da camada atual)
+            # delta_k = sum_j W[k][j] * delta_next_j    (k = unidade da camada atual)
             delta = [
                 sum(W_next_T[k][j] * delta_next[j] for j in range(len(delta_next)))
                 for k in range(len(W_next_T))
@@ -306,7 +310,8 @@ def accuracy(model: MLP, X: List[List[float]], y: List[int]) -> float:
             correct += 1
     return correct / len(X)
 
-def train(model: MLP, X: List[List[float]], y: List[int], epochs: int = 50, batch_size: int = 16, log=None):
+# --- MODIFICAÇÃO: A função de treino agora loga a acurácia de validação ---
+def train(model: MLP, X: List[List[float]], y: List[int], X_val: List[List[float]], y_val: List[int], epochs: int = 50, batch_size: int = 16, log=None):
     N = len(X)
     K = len(set(y))
     idxs = list(range(N))
@@ -335,7 +340,9 @@ def train(model: MLP, X: List[List[float]], y: List[int], epochs: int = 50, batc
                 gB_acc = [zeros(len(model.b[i])) for i in range(len(model.b))]
                 batch_count = 0
         if log:
-            log(f"Época {ep}/{epochs} concluída.")
+            acc_val = accuracy(model, X_val, y_val) if X_val else 0.0
+            acc_tr = accuracy(model, X, y)
+            log(f"Época {ep}/{epochs} - Acurácia: treino={acc_tr*100:.2f}% | validação={acc_val*100:.2f}%")
 
 # -------------------------------
 # Saving / Loading model
@@ -396,12 +403,15 @@ class App(tk.Tk):
         self.batch = tk.IntVar(value=16)
         self.hidden = tk.StringVar(value="32,16")
         self.test_size_pct = tk.IntVar(value=20)
+        self.val_size_pct = tk.IntVar(value=10) # --- MODIFICAÇÃO: Novo campo para validação % ---
         self.status = tk.StringVar(value="Pronto.")
         self.model: Optional[MLP] = None
         self.data: Optional[Dataset] = None
         self.Xtr: List[List[float]] = []
-        self.Xte: List[List[float]] = []
         self.ytr: List[int] = []
+        self.Xval: List[List[float]] = [] # --- MODIFICAÇÃO: Novos conjuntos de dados de validação ---
+        self.yval: List[int] = []
+        self.Xte: List[List[float]] = []
         self.yte: List[int] = []
         self.meta: Dict[str, Any] = {}
 
@@ -439,12 +449,16 @@ class App(tk.Tk):
         ttk.Label(frm_nn, text="Batch:").grid(row=0, column=6, sticky="e", **pad)
         ttk.Entry(frm_nn, textvariable=self.batch, width=10).grid(row=0, column=7, **pad)
 
-        ttk.Label(frm_nn, text="Teste %:").grid(row=0, column=8, sticky="e", **pad)
-        ttk.Entry(frm_nn, textvariable=self.test_size_pct, width=10).grid(row=0, column=9, **pad)
+        # --- MODIFICAÇÃO: Novos campos para validação e teste % ---
+        ttk.Label(frm_nn, text="Val %:").grid(row=1, column=0, sticky="e", **pad)
+        ttk.Entry(frm_nn, textvariable=self.val_size_pct, width=10).grid(row=1, column=1, **pad)
 
-        ttk.Button(frm_nn, text="Treinar", command=self.train_model).grid(row=1, column=0, **pad)
-        ttk.Button(frm_nn, text="Salvar modelo", command=self.save_model_ui).grid(row=1, column=1, **pad)
-        ttk.Button(frm_nn, text="Carregar modelo", command=self.load_model_ui).grid(row=1, column=2, **pad)
+        ttk.Label(frm_nn, text="Teste %:").grid(row=1, column=2, sticky="e", **pad)
+        ttk.Entry(frm_nn, textvariable=self.test_size_pct, width=10).grid(row=1, column=3, **pad)
+
+        ttk.Button(frm_nn, text="Treinar", command=self.train_model).grid(row=2, column=0, **pad)
+        ttk.Button(frm_nn, text="Salvar modelo", command=self.save_model_ui).grid(row=2, column=1, **pad)
+        ttk.Button(frm_nn, text="Carregar modelo", command=self.load_model_ui).grid(row=2, column=2, **pad)
 
         frm_pred = ttk.LabelFrame(self, text="Predição Pontual")
         # --- Visualização da Rede ---
@@ -577,6 +591,7 @@ class App(tk.Tk):
         except Exception as e:
             messagebox.showerror("Erro", str(e))
 
+    # --- MODIFICAÇÃO: Função load_data agora usa a nova função de split ---
     def load_data(self):
         try:
             path = self.csv_path.get()
@@ -591,8 +606,15 @@ class App(tk.Tk):
 
             self.data = load_dataset(path, tcol, normalize=self.normalize.get())
             test_size = max(0.05, min(0.95, self.test_size_pct.get() / 100.0))
-            Xtr, ytr, Xte, yte = train_test_split(self.data.X, self.data.y, test_size=test_size, seed=42)
-            self.Xtr, self.ytr, self.Xte, self.yte = Xtr, ytr, Xte, yte
+            val_size = max(0.05, min(0.95, self.val_size_pct.get() / 100.0))
+            
+            # --- Validar que a soma das proporções não excede 100% ---
+            if test_size + val_size >= 1.0:
+                messagebox.showwarning("Aviso", "A soma das porcentagens de teste e validação deve ser menor que 100%.")
+                return
+
+            Xtr, ytr, Xval, yval, Xte, yte = train_val_test_split(self.data.X, self.data.y, val_size=val_size, test_size=test_size, seed=42)
+            self.Xtr, self.ytr, self.Xval, self.yval, self.Xte, self.yte = Xtr, ytr, Xval, yval, Xte, yte
 
             self.meta = {
                 "csv_path": path,
@@ -602,7 +624,7 @@ class App(tk.Tk):
                 "x_min": self.data.x_min,
                 "x_max": self.data.x_max,
             }
-            self.log(f"Dados carregados. Features={len(self.data.X[0])}, Classes={len(self.data.classes_)}. Train={len(Xtr)}, Test={len(Xte)}"); self.render_network(None)
+            self.log(f"Dados carregados. Features={len(self.data.X[0])}, Classes={len(self.data.classes_)}. Treino={len(Xtr)}, Validação={len(Xval)}, Teste={len(Xte)}"); self.render_network(None)
         except Exception as e:
             messagebox.showerror("Erro ao carregar dados", str(e))
 
@@ -621,6 +643,8 @@ class App(tk.Tk):
                         self.update_idletasks()
         except Exception:
             pass
+            
+    # --- MODIFICAÇÃO: Função train_model agora passa os dados de validação para o 'train' ---
     def train_model(self):
         if not self.Xtr:
             messagebox.showwarning("Aviso", "Carregue os dados primeiro.")
@@ -637,11 +661,12 @@ class App(tk.Tk):
             )
             self.model = MLP(cfg)
             start = time.time()
-            train(self.model, self.Xtr, self.ytr, epochs=self.epochs.get(), batch_size=self.batch.get(), log=self._epoch_log)
+            train(self.model, self.Xtr, self.ytr, self.Xval, self.yval, epochs=self.epochs.get(), batch_size=self.batch.get(), log=self._epoch_log)
             dur = time.time() - start
             acc_tr = accuracy(self.model, self.Xtr, self.ytr)
+            acc_val = accuracy(self.model, self.Xval, self.yval)
             acc_te = accuracy(self.model, self.Xte, self.yte) if self.Xte else 0.0
-            self.log(f"Treino concluído em {dur:.1f}s. Acurácia: train={acc_tr*100:.2f}% | test={acc_te*100:.2f}%"); self.render_network(self.model)
+            self.log(f"Treino concluído em {dur:.1f}s. Acurácia: treino={acc_tr*100:.2f}% | validação={acc_val*100:.2f}% | teste={acc_te*100:.2f}%"); self.render_network(self.model)
         except Exception as e:
             messagebox.showerror("Erro no treino", str(e))
 
