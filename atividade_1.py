@@ -8,7 +8,7 @@ Neural Network + Tkinter GUI from scratch (no ML libs)
 - Train/validation/test split, simple metrics
 - Single-sample prediction UI
 
-Usage:
+Uso:
     python nn_gui_from_scratch.py
 """
 
@@ -138,7 +138,7 @@ def minmax_scale_transform(X: List[List[float]], mins: List[float], maxs: List[f
         Xn.append([(row[j] - mins[j]) / (maxs[j] - mins[j]) for j in range(len(row))])
     return Xn
 
-# --- MODIFICAÇÃO: Nova função para divisão em treino/validação/teste ---
+# --- split treino/val/teste ---
 def train_val_test_split(X, y, val_size=0.1, test_size=0.2, seed=42):
     pairs = list(zip(X, y))
     random.Random(seed).shuffle(pairs)
@@ -159,8 +159,6 @@ def load_dataset(csv_path: str, target_col: int, normalize: bool = True) -> Data
     rows = read_csv(csv_path)
     if not rows:
         raise ValueError("CSV vazio ou não lido.")
-    # heuristics: if header contains non-numeric in target, still ok
-    # Try detect header by trying to parse first row numbers
     def is_header(row):
         return any(try_float(c) is None for c in row)
     header = None
@@ -186,7 +184,6 @@ def load_dataset(csv_path: str, target_col: int, normalize: bool = True) -> Data
         if ok:
             X_raw.append(feats_f)
         else:
-            # skip rows with non-numeric features
             continue
 
     if not X_raw:
@@ -223,7 +220,6 @@ class MLP:
             self.b.append(rand_vector(layer_dims[i+1], scale=0.0))
 
     def forward(self, x: List[float]) -> Tuple[List[List[float]], List[List[float]]]:
-        # returns (zs, activations) per layer; activations includes input as first
         a = x
         activations = [a]
         zs = []
@@ -242,30 +238,22 @@ class MLP:
         grads_W = [zeros((len(self.W[i]), len(self.W[i][0]))) for i in range(len(self.W))]
         grads_b = [zeros(len(self.b[i])) for i in range(len(self.b))]
 
-        # output layer gradient: softmax + CE => delta = y_hat - y
         y_hat = activations[-1]
         delta = vecsub(y_hat, y_onehot)
 
-        # grad for last layer
         a_prev = activations[-2]
         grads_W[-1] = outer(delta, a_prev)
         grads_b[-1] = delta[:]
 
-        # propagate backwards through hidden layers
         for li in range(len(self.W)-2, -1, -1):
-            W_next_T = transpose(self.W[li+1])  # shape: (n_curr, n_next)
-            delta_next = grads_b[li+1]          # length = n_next
-
-            # delta_k = sum_j W[k][j] * delta_next_j    (k = unidade da camada atual)
+            W_next_T = transpose(self.W[li+1])
+            delta_next = grads_b[li+1]
             delta = [
                 sum(W_next_T[k][j] * delta_next[j] for j in range(len(delta_next)))
                 for k in range(len(W_next_T))
             ]
-
-            # aplica ReLU' no z da camada atual
             relud = relu_deriv(zs[li])
             delta = [delta[k] * relud[k] for k in range(len(relud))]
-
             a_prev = activations[li]
             grads_W[li] = outer(delta, a_prev)
             grads_b[li] = delta[:]
@@ -273,7 +261,6 @@ class MLP:
         return grads_W, grads_b
 
     def apply_grads(self, gW, gB, batch_size: int):
-        # SGD update with optional L2
         for li in range(len(self.W)):
             for r in range(len(self.W[li])):
                 for c in range(len(self.W[li][0])):
@@ -310,7 +297,6 @@ def accuracy(model: MLP, X: List[List[float]], y: List[int]) -> float:
             correct += 1
     return correct / len(X)
 
-# --- MODIFICAÇÃO: A função de treino agora loga a acurácia de validação ---
 def train(model: MLP, X: List[List[float]], y: List[int], X_val: List[List[float]], y_val: List[int], epochs: int = 50, batch_size: int = 16, log=None):
     N = len(X)
     K = len(set(y))
@@ -325,7 +311,6 @@ def train(model: MLP, X: List[List[float]], y: List[int], X_val: List[List[float
             yi = y[idx]
             yi_oh = one_hot(yi, K)
             gW, gB = model.backward(xi, yi_oh)
-            # accumulate
             for li in range(len(gW_acc)):
                 for r in range(len(gW_acc[li])):
                     for c in range(len(gW_acc[li][0])):
@@ -335,7 +320,6 @@ def train(model: MLP, X: List[List[float]], y: List[int], X_val: List[List[float
             batch_count += 1
             if batch_count == batch_size or i == N-1:
                 model.apply_grads(gW_acc, gB_acc, batch_count)
-                # reset accumulators
                 gW_acc = [zeros((len(model.W[i]), len(model.W[i][0]))) for i in range(len(model.W))]
                 gB_acc = [zeros(len(model.b[i])) for i in range(len(model.b))]
                 batch_count = 0
@@ -382,7 +366,7 @@ def load_model(path: str) -> Tuple[MLP, Dict[str, Any]]:
     return model, payload.get("meta", {})
 
 # -------------------------------
-# GUI (Tkinter)
+# GUI (Tkinter) com CARD + SCROLL
 # -------------------------------
 
 import tkinter as tk
@@ -394,33 +378,95 @@ class App(tk.Tk):
         self.title("Rede Neural do Zero (CSV)")
         self.geometry("900x680")
 
-        # State
+        # Estado
         self.csv_path = tk.StringVar(value="heart.csv")
-        self.target_col = tk.IntVar(value=-1)  # -1 means "last column"
+        self.target_col = tk.IntVar(value=-1)  # -1 = última coluna
         self.normalize = tk.BooleanVar(value=True)
         self.epochs = tk.IntVar(value=60)
         self.lr = tk.DoubleVar(value=0.05)
         self.batch = tk.IntVar(value=16)
         self.hidden = tk.StringVar(value="32,16")
         self.test_size_pct = tk.IntVar(value=20)
-        self.val_size_pct = tk.IntVar(value=10) # --- MODIFICAÇÃO: Novo campo para validação % ---
+        self.val_size_pct = tk.IntVar(value=10)
         self.status = tk.StringVar(value="Pronto.")
         self.model: Optional[MLP] = None
         self.data: Optional[Dataset] = None
         self.Xtr: List[List[float]] = []
         self.ytr: List[int] = []
-        self.Xval: List[List[float]] = [] # --- MODIFICAÇÃO: Novos conjuntos de dados de validação ---
+        self.Xval: List[List[float]] = []
         self.yval: List[int] = []
         self.Xte: List[List[float]] = []
         self.yte: List[int] = []
         self.meta: Dict[str, Any] = {}
 
+        # Estilo simples de "card"
+        self.style = ttk.Style(self)
+        # Alguns temas não permitem alterar bg do TFrame; usaremos padding + relief
+        try:
+            self.style.configure("Card.TFrame", relief="groove", borderwidth=2, padding=12)
+        except Exception:
+            pass
+
         self._build_ui()
+
+    # ---------- Helpers para scroll ----------
+    def _bind_mousewheel(self, widget):
+        # Windows/Mac
+        widget.bind_all("<MouseWheel>", self._on_mousewheel, add="+")
+        # Linux
+        widget.bind_all("<Button-4>", self._on_mousewheel_linux, add="+")
+        widget.bind_all("<Button-5>", self._on_mousewheel_linux, add="+")
+
+    def _on_mousewheel(self, event):
+        # event.delta: Windows (120/-120), macOS (±)
+        self.canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+
+    def _on_mousewheel_linux(self, event):
+        if event.num == 4:
+            self.canvas.yview_scroll(-3, "units")
+        elif event.num == 5:
+            self.canvas.yview_scroll(3, "units")
+
+    def _on_frame_configure(self, event):
+        # Atualiza região rolável
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _on_canvas_configure(self, event):
+        # Mantém o frame interno com mesma largura do canvas (responsivo)
+        canvas_width = event.width
+        self.canvas.itemconfigure(self._canvas_window_id, width=canvas_width)
+
+    # ----------------------------------------
 
     def _build_ui(self):
         pad = {"padx": 8, "pady": 6}
 
-        frm_top = ttk.LabelFrame(self, text="Dados")
+        # --- Área rolável (Canvas + Scrollbar) ---
+        wrapper = ttk.Frame(self)
+        wrapper.pack(fill="both", expand=True)
+
+        self.canvas = tk.Canvas(wrapper, borderwidth=0, highlightthickness=0)
+        vscroll = ttk.Scrollbar(wrapper, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=vscroll.set)
+
+        self.canvas.pack(side="left", fill="both", expand=True)
+        vscroll.pack(side="right", fill="y")
+
+        # Frame que ficará dentro do Canvas
+        self.scrollable_frame = ttk.Frame(self.canvas)
+        self._canvas_window_id = self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+
+        # Bindings de rolagem e resize
+        self.scrollable_frame.bind("<Configure>", self._on_frame_configure)
+        self.canvas.bind("<Configure>", self._on_canvas_configure)
+        self._bind_mousewheel(self.canvas)
+
+        # --- CARD MAIOR que envolve todos os elementos ---
+        card = ttk.Frame(self.scrollable_frame, style="Card.TFrame")
+        card.pack(fill="both", expand=True, **pad)
+
+        # A partir daqui, tudo vai dentro do "card"
+        frm_top = ttk.LabelFrame(card, text="Dados")
         frm_top.pack(fill="x", **pad)
 
         ttk.Label(frm_top, text="CSV:").grid(row=0, column=0, sticky="w", **pad)
@@ -434,7 +480,7 @@ class App(tk.Tk):
         ttk.Button(frm_top, text="Pré-visualizar", command=self.preview_csv).grid(row=2, column=0, **pad)
         ttk.Button(frm_top, text="Carregar", command=self.load_data).grid(row=2, column=1, **pad)
 
-        frm_nn = ttk.LabelFrame(self, text="Treinamento")
+        frm_nn = ttk.LabelFrame(card, text="Treinamento")
         frm_nn.pack(fill="x", **pad)
 
         ttk.Label(frm_nn, text="Hidden layers (ex: 32,16):").grid(row=0, column=0, sticky="w", **pad)
@@ -449,7 +495,6 @@ class App(tk.Tk):
         ttk.Label(frm_nn, text="Batch:").grid(row=0, column=6, sticky="e", **pad)
         ttk.Entry(frm_nn, textvariable=self.batch, width=10).grid(row=0, column=7, **pad)
 
-        # --- MODIFICAÇÃO: Novos campos para validação e teste % ---
         ttk.Label(frm_nn, text="Val %:").grid(row=1, column=0, sticky="e", **pad)
         ttk.Entry(frm_nn, textvariable=self.val_size_pct, width=10).grid(row=1, column=1, **pad)
 
@@ -460,36 +505,35 @@ class App(tk.Tk):
         ttk.Button(frm_nn, text="Salvar modelo", command=self.save_model_ui).grid(row=2, column=1, **pad)
         ttk.Button(frm_nn, text="Carregar modelo", command=self.load_model_ui).grid(row=2, column=2, **pad)
 
-        frm_pred = ttk.LabelFrame(self, text="Predição Pontual")
-        # --- Visualização da Rede ---
-        frm_viz = ttk.LabelFrame(self, text="Visualização da Rede (estrutura e pesos)")
+        # Visualização da Rede
+        frm_viz = ttk.LabelFrame(card, text="Visualização da Rede (estrutura e pesos)")
         frm_viz.pack(fill="both", expand=False, **pad)
         self.canvas_net = tk.Canvas(frm_viz, width=860, height=360, bg="#0f0f0f", highlightthickness=0)
         self.canvas_net.pack(fill="x", expand=False, **pad)
-    
+
+        # Predição
+        frm_pred = ttk.LabelFrame(card, text="Predição Pontual")
         frm_pred.pack(fill="x", **pad)
         self.sample_entry = ttk.Entry(frm_pred, width=90)
         self.sample_entry.grid(row=0, column=0, columnspan=6, sticky="we", **pad)
         ttk.Label(frm_pred, text="Valores separados por vírgula (somente features, na mesma ordem do CSV).").grid(row=1, column=0, columnspan=6, sticky="w", **pad)
         ttk.Button(frm_pred, text="Prever", command=self.predict_one).grid(row=0, column=6, **pad)
 
-        frm_log = ttk.LabelFrame(self, text="Log")
+        # Log
+        frm_log = ttk.LabelFrame(card, text="Log")
         frm_log.pack(fill="both", expand=True, **pad)
         self.txt = tk.Text(frm_log, height=16)
         self.txt.pack(fill="both", expand=True, **pad)
 
-        frm_status = ttk.Frame(self)
+        # Status (fica fora do card? Aqui mantive dentro do card para tudo rolar junto)
+        frm_status = ttk.Frame(card)
         frm_status.pack(fill="x")
         ttk.Label(frm_status, textvariable=self.status).pack(side="left", padx=8, pady=4)
 
-    
     def _current_architecture(self):
-        # Try to infer the layer sizes
         if self.model is not None:
-            # From trained model
             sizes = [self.model.cfg.input_dim] + self.model.cfg.hidden_layers + [self.model.cfg.output_dim]
             return sizes
-        # Fallback: from loaded data + text field "hidden" + classes
         if self.data is not None:
             try:
                 hidden_layers = [int(x.strip()) for x in self.hidden.get().split(",") if x.strip()]
@@ -502,7 +546,6 @@ class App(tk.Tk):
         return []
 
     def render_network(self, model=None):
-        # Draw a simple MLP diagram with nodes and weighted edges
         if not hasattr(self, "canvas_net"):
             return
         cnv = self.canvas_net
@@ -516,10 +559,8 @@ class App(tk.Tk):
         left_pad, right_pad, top_pad, bottom_pad = 50, 50, 30, 30
         L = len(arch)
         max_nodes = max(arch)
-        # positions per layer
         layer_x = [left_pad + i*( (width-left_pad-right_pad)/max(1,(L-1)) ) for i in range(L)]
-        y_spacings = []
-        node_pos = []  # list of ( (x,y) for each node in layer )
+        node_pos = []
         for i, n in enumerate(arch):
             if n == 1:
                 ys = [height/2]
@@ -530,23 +571,18 @@ class App(tk.Tk):
             x = layer_x[i]
             node_pos.append([(x, y) for y in ys])
 
-        # Background labels
         for li, n in enumerate(arch):
             label = "Entrada" if li == 0 else ("Saída" if li == L-1 else f"Oculta {li}")
             cnv.create_text(layer_x[li], 15, fill="#aaa", text=f"{label} ({n})")
 
-        # Edge drawing — if model provided, color by weight sign and thickness by magnitude
         def edge_style(w, maxabs):
             if maxabs <= 0: maxabs = 1.0
-            t = max(1, int(1 + 3*abs(w)/maxabs))  # thickness 1..4
-            # colors: red para negativo, azul para positivo
+            t = max(1, int(1 + 3*abs(w)/maxabs))
             col = "#d9534f" if w < 0 else "#5bc0de"
             return col, t
 
-        # Determine weights max abs per layer for scaling
         W = model.W if model else (self.model.W if self.model else None)
         if W is None:
-            # draw neutral edges
             for li in range(L-1):
                 for i,(x1,y1) in enumerate(node_pos[li]):
                     for j,(x2,y2) in enumerate(node_pos[li+1]):
@@ -561,13 +597,11 @@ class App(tk.Tk):
                         col, thick = edge_style(w, maxabs)
                         cnv.create_line(x1+8,y1, x2-8,y2, fill=col, width=thick)
 
-        # Draw nodes
         r = 7
         for li in range(L):
             for (x,y) in node_pos[li]:
                 cnv.create_oval(x-r, y-r, x+r, y+r, outline="#eee", fill="#222")
 
-        # Legend
         cnv.create_rectangle(10, height-28, 240, height-10, outline="#777")
         cnv.create_text(20, height-19, anchor="w", fill="#bbb",
                         text="Arestas: azul=pesos positivos, vermelho=negativos; espessura ~ |peso|")
@@ -591,14 +625,11 @@ class App(tk.Tk):
         except Exception as e:
             messagebox.showerror("Erro", str(e))
 
-    # --- MODIFICAÇÃO: Função load_data agora usa a nova função de split ---
     def load_data(self):
         try:
             path = self.csv_path.get()
             tcol = self.target_col.get()
             if tcol == -1:
-                # assume last column
-                # need to inspect first row to get width
                 rows = read_csv(path)
                 width = len(rows[0]) if rows else 0
                 tcol = width - 1
@@ -607,8 +638,7 @@ class App(tk.Tk):
             self.data = load_dataset(path, tcol, normalize=self.normalize.get())
             test_size = max(0.05, min(0.95, self.test_size_pct.get() / 100.0))
             val_size = max(0.05, min(0.95, self.val_size_pct.get() / 100.0))
-            
-            # --- Validar que a soma das proporções não excede 100% ---
+
             if test_size + val_size >= 1.0:
                 messagebox.showwarning("Aviso", "A soma das porcentagens de teste e validação deve ser menor que 100%.")
                 return
@@ -624,18 +654,16 @@ class App(tk.Tk):
                 "x_min": self.data.x_min,
                 "x_max": self.data.x_max,
             }
-            self.log(f"Dados carregados. Features={len(self.data.X[0])}, Classes={len(self.data.classes_)}. Treino={len(Xtr)}, Validação={len(Xval)}, Teste={len(Xte)}"); self.render_network(None)
+            self.log(f"Dados carregados. Features={len(self.data.X[0])}, Classes={len(self.data.classes_)}. Treino={len(Xtr)}, Validação={len(Xval)}, Teste={len(Xte)}")
+            self.render_network(None)
         except Exception as e:
             messagebox.showerror("Erro ao carregar dados", str(e))
 
-    
     def _epoch_log(self, msg: str):
         self.log(msg)
         try:
             if msg.startswith("Época"):
-                # update viz every 5 epochs (non-blocking)
                 parts = msg.split()
-                # Época N/M ...
                 if len(parts) >= 2 and "/" in parts[1]:
                     num = int(parts[1].split("/")[0])
                     if num % 5 == 0 and self.model is not None:
@@ -643,8 +671,7 @@ class App(tk.Tk):
                         self.update_idletasks()
         except Exception:
             pass
-            
-    # --- MODIFICAÇÃO: Função train_model agora passa os dados de validação para o 'train' ---
+
     def train_model(self):
         if not self.Xtr:
             messagebox.showwarning("Aviso", "Carregue os dados primeiro.")
@@ -666,7 +693,8 @@ class App(tk.Tk):
             acc_tr = accuracy(self.model, self.Xtr, self.ytr)
             acc_val = accuracy(self.model, self.Xval, self.yval)
             acc_te = accuracy(self.model, self.Xte, self.yte) if self.Xte else 0.0
-            self.log(f"Treino concluído em {dur:.1f}s. Acurácia: treino={acc_tr*100:.2f}% | validação={acc_val*100:.2f}% | teste={acc_te*100:.2f}%"); self.render_network(self.model)
+            self.log(f"Treino concluído em {dur:.1f}s. Acurácia: treino={acc_tr*100:.2f}% | validação={acc_val*100:.2f}% | teste={acc_te*100:.2f}%")
+            self.render_network(self.model)
         except Exception as e:
             messagebox.showerror("Erro no treino", str(e))
 
@@ -683,7 +711,6 @@ class App(tk.Tk):
             if len(vals) != self.model.cfg.input_dim:
                 messagebox.showwarning("Aviso", f"Esperado {self.model.cfg.input_dim} valores, recebido {len(vals)}.")
                 return
-            # apply same scaling if needed
             if self.meta.get("normalize", True):
                 mins = self.meta["x_min"]
                 maxs = self.meta["x_max"]
@@ -718,7 +745,8 @@ class App(tk.Tk):
             model, meta = load_model(path)
             self.model = model
             self.meta = meta
-            self.log(f"Modelo carregado. Input={model.cfg.input_dim}, Output={model.cfg.output_dim}."); self.render_network(self.model)
+            self.log(f"Modelo carregado. Input={model.cfg.input_dim}, Output={model.cfg.output_dim}.")
+            self.render_network(self.model)
         except Exception as e:
             messagebox.showerror("Erro ao carregar", str(e))
 
